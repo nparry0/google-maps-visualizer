@@ -2,6 +2,8 @@
 
 Run `npm install` and `npm start`, then open http://127.0.0.1:4173 and choose a Google Maps JSON export. Select a row to show it on the map. The server listens only on your computer; the export is read and parsed in your browser.
 
+Leaflet's browser files are bundled in `vendor/leaflet` so the static site also works on GitHub Pages. When updating Leaflet, update those files from the package's `dist` directory and include its license.
+
 The map and visible trip thumbnails request tiles from OpenStreetMap. These requests reveal the approximate map areas and your IP address, but not the export or the exact marker coordinates. Thumbnails load only when visible. OpenStreetMap use is subject to its [tile usage policy](https://operations.osmfoundation.org/policies/tiles/).
 
 Export CSV downloads the included trips' start times, durations, and mileage, plus their total. It does not include maps or coordinates. Estimates retain the `~` marker; the total uses unrounded distances and identifies any included trips with unknown mileage.
