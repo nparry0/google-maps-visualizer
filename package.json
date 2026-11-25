@@ -1,0 +1,28 @@
+{
+  "name": "google-maps-visualizer",
+  "version": "1.0.0",
+  "description": "",
+  "main": "parser.js",
+  "scripts": {
+    "test": "node parser.test.js",
+    "start": "node server.js",
+    "build:map": "node build-map.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nparry0/google-maps-visualizer.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/nparry0/google-maps-visualizer/issues"
+  },
+  "homepage": "https://github.com/nparry0/google-maps-visualizer#readme",
+  "dependencies": {
+    "leaflet": "1.9.4",
+    "topojson-client": "3.1.0",
+    "world-atlas": "2.0.2"
+  }
+}

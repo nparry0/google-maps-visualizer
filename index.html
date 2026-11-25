@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Google Maps Export Viewer</title>
+  <link rel="stylesheet" href="node_modules/leaflet/dist/leaflet.css">
+  <style>
+    body { font-family: Georgia, serif; color: #23332f; background: #f3f5f2; margin: 0; }
+    main { max-width: 1000px; margin: 0 auto; padding: 32px 20px; }
+    h1 { font-size: 2rem; margin: 0 0 8px; }
+    p { line-height: 1.5; }
+    .upload { background: white; border: 1px solid #c9d5cd; padding: 20px; margin: 24px 0; }
+    label { display: block; font-weight: bold; margin-bottom: 10px; }
+    input { max-width: 100%; }
+    #status { min-height: 1.5em; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; background: white; text-align: left; }
+    th, td { padding: 12px; border-bottom: 1px solid #dce5df; vertical-align: top; }
+    th { background: #e4ede7; font-size: 0.875rem; }
+    td { overflow-wrap: anywhere; }
+    .trip-row { cursor: pointer; }
+    .trip-row:hover, .trip-row.selected { background: #e8f2ed; }
+    .trip-row.excluded, .trip-row.excluded:hover { background: #c4c9c6; color: #33403a; }
+    .trip-row.excluded .thumbnail { background: #aeb5b0; border-color: #969d99; }
+    .trip-row.excluded .thumbnail-map { filter: grayscale(1); opacity: .4; }
+    .trip-toggle { appearance: none; width: 40px; height: 24px; margin: 0; border: 1px solid #89958e; border-radius: 12px; background: #aab3ae; cursor: pointer; vertical-align: middle; }
+    .trip-toggle::before { content: ''; display: block; width: 18px; height: 18px; margin: 2px; border-radius: 50%; background: white; }
+    .trip-toggle:checked { background: #19705b; border-color: #19705b; }
+    .trip-toggle:checked::before { transform: translateX(16px); }
+    .trip-toggle:focus-visible { outline: 3px solid #155e49; outline-offset: 2px; }
+    .summary-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; }
+    .export-button { padding: 8px 12px; border: 1px solid #155e49; border-radius: 4px; background: #155e49; color: white; font: inherit; cursor: pointer; }
+    .export-button:hover { background: #104c3b; }
+    #total { font-weight: bold; }
+    .thumbnail { position: relative; width: 160px; height: 100px; background: #e4ede7; border: 1px solid #c9d5cd; }
+    .thumbnail-map { width: 100%; height: 100%; }
+    .thumbnail-button { position: absolute; inset: 0; z-index: 500; width: 100%; height: 100%; border: 0; padding: 0; background: transparent; cursor: pointer; }
+    .thumbnail-button:focus-visible { outline: 3px solid #155e49; outline-offset: 2px; }
+    .thumbnail-credit { position: absolute; right: 0; bottom: 0; z-index: 600; padding: 1px 3px; background: rgba(255,255,255,.9); font: 9px/1.3 sans-serif; }
+    .thumbnail-empty { display: grid; place-items: center; height: 100%; color: #687670; font-size: 0.875rem; }
+    #map-section { margin: 0; }
+    #map { height: 360px; max-height: 55vh; background: #dbe9ed; border: 1px solid #c9d5cd; }
+    #map-title { font-size: 1.2rem; margin: 0 0 10px; }
+    .map-legend { font-size: 0.875rem; }
+    .map-legend span { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Google Maps Export Viewer</h1>
+    <ul>
+      <li>Select a JSON export file from Google Maps.</li>
+      <li>Browse through your trips and select which ones to include in your report.</li>
+      <li>Click on rows to see a more detailed map view of each trip.</li>
+      <li>Your progress will be saved in this browser so you can return later to continue your selection.</li>
+      <li>Download the report which includes your selected trips and total mileage.</li>
+    </ul>
+    <div class="upload">
+      <label for="file">Select Google Maps export to view</label>
+      <input id="file" type="file" accept=".json,application/json">
+    </div>
+    <p id="status" role="status" aria-live="polite">No file selected.</p>
+    <p id="progress-status" role="status" aria-live="polite" hidden></p>
+    <section id="map-section" aria-labelledby="map-title" hidden>
+      <h2 id="map-title">Selected location</h2>
+      <p class="map-legend" id="map-legend" hidden><span style="background: #19705b"></span>Start &nbsp; <span style="background: #c04c36"></span>End</p>
+      <div id="map" aria-label="Map of selected location"></div>
+    </section>
+    <div class="table-wrap" id="results" hidden>
+      <div class="summary-bar">
+        <p id="total" role="status" aria-live="polite">Total mileage: 0.0 miles</p>
+        <button id="export-csv" class="export-button" type="button">Export CSV Report</button>
+      </div>
+      <table>
+        <thead><tr><th scope="col">Map</th><th scope="col">Start time (local)</th><th scope="col">Duration</th><th scope="col">Miles traveled</th><th scope="col">Include</th></tr></thead>
+        <tbody id="locations"></tbody>
+      </table>
+    </div>
+  </main>
+  <script src="node_modules/leaflet/dist/leaflet.js"></script>
+  <script src="parser.js"></script>
+  <script>
+    const fileInput = document.getElementById('file');
+    const status = document.getElementById('status');
+    const progressStatus = document.getElementById('progress-status');
+    const results = document.getElementById('results');
+    const locations = document.getElementById('locations');
+    const total = document.getElementById('total');
+    const exportButton = document.getElementById('export-csv');
+    const mapSection = document.getElementById('map-section');
+    const mapTitle = document.getElementById('map-title');
+    const mapLegend = document.getElementById('map-legend');
+    const mapRow = document.createElement('tr');
+    const mapCell = document.createElement('td');
+    mapCell.colSpan = 5;
+    mapCell.appendChild(mapSection);
+    mapRow.appendChild(mapCell);
+    mapRow.hidden = true;
+    const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    let map;
+    let mapFeatures;
+    let selectedRow;
+    let selection = 0;
+    const thumbnailEntries = new WeakMap();
+    const thumbnailMaps = new Map();
+    const thumbnailObserver = new IntersectionObserver(function (observations) {
+      observations.forEach(function (observation) {
+        const element = observation.target;
+        if (observation.isIntersecting && element.isConnected && !element.parentElement.hidden && !thumbnailMaps.has(element)) {
+          const entry = thumbnailEntries.get(element);
+          const positions = [entry.start, ...entry.path, entry.end].filter(Boolean);
+          const thumbnail = L.map(element, {
+            zoomControl: false, attributionControl: false, dragging: false, scrollWheelZoom: false,
+            doubleClickZoom: false, touchZoom: false, boxZoom: false, keyboard: false, minZoom: 1
+          });
+          if (positions.length > 1) thumbnail.fitBounds(positions.map(function (position) { return [position.latitude, position.longitude]; }), { padding: [8, 8], maxZoom: 14, animate: false });
+          else thumbnail.setView([positions[0].latitude, positions[0].longitude], 14);
+          L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(thumbnail);
+          if (entry.path.length > 1) L.polyline(positions.map(function (position) { return [position.latitude, position.longitude]; }), { color: '#19705b', weight: 3, interactive: false }).addTo(thumbnail);
+          if (entry.start) L.circleMarker([entry.start.latitude, entry.start.longitude], { radius: 4, color: '#fff', weight: 1, fillColor: '#19705b', fillOpacity: 1, interactive: false }).addTo(thumbnail);
+          if (entry.end) L.circleMarker([entry.end.latitude, entry.end.longitude], { radius: 4, color: '#fff', weight: 1, fillColor: '#c04c36', fillOpacity: 1, interactive: false }).addTo(thumbnail);
+          thumbnailMaps.set(element, thumbnail);
+        } else if (!observation.isIntersecting && thumbnailMaps.has(element)) {
+          thumbnailMaps.get(element).remove();
+          thumbnailMaps.delete(element);
+        }
+      });
+    });
+
+    async function fingerprint(text) {
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+      return Array.from(new Uint8Array(digest), function (byte) { return byte.toString(16).padStart(2, '0'); }).join('');
+    }
+
+    function formatDuration(start, end) {
+      if (!start || !end) return 'Unknown';
+      const duration = Date.parse(end) - Date.parse(start);
+      if (!Number.isFinite(duration) || duration < 0) return 'Unknown';
+      const totalMinutes = Math.round(duration / 60000);
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+      return String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0');
+    }
+
+    function showLocation(entry, row) {
+      const isTrip = entry.kind === 'Trip';
+      const positions = isTrip ? [entry.start, ...entry.path, entry.end].filter(Boolean) : [entry];
+      if (positions.length === 0) return;
+      if (selectedRow) {
+        selectedRow.classList.remove('selected');
+        selectedRow.querySelector('.thumbnail-button').setAttribute('aria-expanded', 'false');
+        if (selectedRow === row) {
+          selectedRow = null;
+          mapRow.hidden = true;
+          return;
+        }
+      }
+      selectedRow = row;
+      row.classList.add('selected');
+      row.querySelector('.thumbnail-button').setAttribute('aria-expanded', 'true');
+      row.after(mapRow);
+      mapRow.hidden = false;
+      mapTitle.textContent = entry.name || entry.kind;
+      mapLegend.hidden = !isTrip;
+      mapSection.hidden = false;
+      if (!map) {
+        map = L.map('map', { scrollWheelZoom: false, minZoom: 1 }).setView([positions[0].latitude, positions[0].longitude], 16);
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+      }
+      if (mapFeatures) mapFeatures.remove();
+      mapFeatures = L.layerGroup().addTo(map);
+      function addMarker(point, color, label) {
+        L.circleMarker([point.latitude, point.longitude], {
+          radius: 8, color: '#ffffff', weight: 2, fillColor: color, fillOpacity: 1
+        }).bindTooltip(label).addTo(mapFeatures);
+      }
+      if (isTrip) {
+        if (entry.path.length > 1) L.polyline(positions.map(function (point) { return [point.latitude, point.longitude]; }), { color: '#19705b', weight: 3 }).addTo(mapFeatures);
+        if (entry.start) addMarker(entry.start, '#19705b', 'Start');
+        if (entry.end) addMarker(entry.end, '#c04c36', 'End');
+      } else {
+        addMarker(entry, '#c04c36', entry.name || entry.kind);
+      }
+      map.invalidateSize();
+      if (positions.length > 1) {
+        map.fitBounds(positions.map(function (point) { return [point.latitude, point.longitude]; }), { padding: [30, 30], maxZoom: 16 });
+      } else {
+        map.setView([positions[0].latitude, positions[0].longitude], 16);
+      }
+      mapSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    fileInput.addEventListener('change', async function () {
+      const currentSelection = ++selection;
+      const file = fileInput.files[0];
+      thumbnailObserver.disconnect();
+      thumbnailMaps.forEach(function (thumbnail) { thumbnail.remove(); });
+      thumbnailMaps.clear();
+      locations.replaceChildren();
+      total.textContent = 'Total mileage: 0.0 miles';
+      exportButton.onclick = null;
+      progressStatus.hidden = true;
+      progressStatus.textContent = '';
+      results.hidden = true;
+      mapSection.hidden = true;
+      mapRow.hidden = true;
+      selectedRow = null;
+      if (!file) {
+        status.textContent = 'No file selected.';
+        return;
+      }
+
+      status.textContent = 'Reading file...';
+      try {
+        const content = await file.text();
+        const data = JSON.parse(content);
+        if (currentSelection !== selection) return;
+        const entries = MapsParser.parse(data).filter(function (entry) { return entry.kind === 'Trip' && (entry.distanceMiles == null || entry.distanceMiles >= 0.5); });
+        entries.sort(function (left, right) {
+          if (!left.timestamp) return right.timestamp ? 1 : 0;
+          if (!right.timestamp) return -1;
+          return right.timestamp.localeCompare(left.timestamp);
+        });
+        if (entries.length === 0) {
+          status.textContent = 'No trips of at least 0.5 miles or unknown distance found in this file.';
+          return;
+        }
+        let progressKey = null;
+        let excludedTrips = new Set();
+        let progressMessage;
+        try {
+          const fileFingerprint = await fingerprint(content);
+          const tripFingerprint = await fingerprint(JSON.stringify(entries));
+          if (currentSelection !== selection) return;
+          progressKey = 'google-maps-visualizer:progress:v1:' + fileFingerprint + ':' + tripFingerprint;
+          const saved = localStorage.getItem(progressKey);
+          if (saved !== null) {
+            const indexes = JSON.parse(saved);
+            if (!Array.isArray(indexes) || !indexes.every(function (index) { return Number.isInteger(index) && index >= 0 && index < entries.length; })) throw new Error('Invalid saved progress');
+            excludedTrips = new Set(indexes);
+          }
+          localStorage.setItem(progressKey, JSON.stringify(Array.from(excludedTrips)));
+          progressMessage = saved === null ? 'Progress will be saved in this browser.' : 'Saved progress restored from this browser.';
+        } catch (error) {
+          progressKey = null;
+          progressMessage = 'Progress could not be saved or restored in this browser.';
+        }
+        if (currentSelection !== selection) return;
+        progressStatus.textContent = progressMessage;
+        progressStatus.hidden = false;
+        const activeTrips = new Map(entries.map(function (entry, index) { return [index, entry]; }).filter(function (pair) { return !excludedTrips.has(pair[0]); }));
+        function saveProgress() {
+          if (!progressKey) return;
+          try {
+            localStorage.setItem(progressKey, JSON.stringify(Array.from(excludedTrips)));
+            progressStatus.textContent = 'Progress saved in this browser.';
+          } catch (error) {
+            progressStatus.textContent = 'Progress could not be saved in this browser.';
+          }
+        }
+        function summarizeMileage() {
+          let milesTenths = 0;
+          let unknown = 0;
+          let estimated = false;
+          activeTrips.forEach(function (entry) {
+            if (entry.distanceMiles == null) {
+              unknown += 1;
+            } else {
+              milesTenths += Math.round(Number(entry.distanceMiles.toFixed(1)) * 10);
+              if (entry.distanceSource === 'path') estimated = true;
+            }
+          });
+          const miles = milesTenths / 10;
+          return { miles, unknown, estimated };
+        }
+        function updateTotal() {
+          const { miles, unknown, estimated } = summarizeMileage();
+          total.textContent = 'Total mileage: ' + (estimated ? '~' : '') + miles.toFixed(1) + ' miles' +
+            (unknown ? ' (' + unknown + (unknown === 1 ? ' trip' : ' trips') + ' with unknown distance not included)' : '');
+        }
+        exportButton.onclick = function () {
+          const selected = entries.filter(function (entry, index) { return activeTrips.has(index); });
+          const summary = summarizeMileage();
+          const csvRows = [['Start time (local)', 'Duration', 'Miles traveled']];
+          selected.forEach(function (entry) {
+            csvRows.push([
+              entry.timestamp ? dateFormatter.format(new Date(entry.timestamp)) : 'Unknown',
+              formatDuration(entry.timestamp, entry.endTimestamp),
+              entry.distanceMiles == null ? 'Unknown' : (entry.distanceSource === 'path' ? '~' : '') + entry.distanceMiles.toFixed(1)
+            ]);
+          });
+          csvRows.push([
+            'Total' + (summary.unknown ? ' (' + summary.unknown + (summary.unknown === 1 ? ' trip' : ' trips') + ' with unknown distance not included)' : ''),
+            '',
+            (summary.estimated ? '~' : '') + summary.miles.toFixed(1)
+          ]);
+          const csv = csvRows.map(function (row) {
+            return row.map(function (value) { return '"' + String(value).replace(/"/g, '""') + '"'; }).join(',');
+          }).join('\r\n') + '\r\n';
+          const url = URL.createObjectURL(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' }));
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = 'trips.csv';
+          link.hidden = true;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+        };
+        updateTotal();
+        const rows = document.createDocumentFragment();
+        entries.forEach(function (entry, index) {
+          const hasLocation = entry.start || entry.end || entry.path.length;
+          const row = document.createElement('tr');
+          row.className = 'trip-row';
+          row.classList.toggle('excluded', excludedTrips.has(index));
+          const thumbnailCell = document.createElement('td');
+          const thumbnail = document.createElement('div');
+          thumbnail.className = 'thumbnail';
+          thumbnail.hidden = excludedTrips.has(index);
+          if (hasLocation) {
+            const thumbnailMap = document.createElement('div');
+            thumbnailMap.className = 'thumbnail-map';
+            thumbnailMap.setAttribute('aria-hidden', 'true');
+            thumbnailEntries.set(thumbnailMap, entry);
+            thumbnail.appendChild(thumbnailMap);
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'thumbnail-button';
+            button.title = 'Expand trip map';
+            button.setAttribute('aria-label', 'Map for trip ' + (index + 1));
+            button.setAttribute('aria-expanded', 'false');
+            button.setAttribute('aria-controls', 'map-section');
+            thumbnail.appendChild(button);
+            const credit = document.createElement('div');
+            credit.className = 'thumbnail-credit';
+            credit.append('\u00a9 ');
+            const creditLink = document.createElement('a');
+            creditLink.href = 'https://www.openstreetmap.org/copyright';
+            creditLink.textContent = 'OpenStreetMap';
+            creditLink.addEventListener('click', function (event) { event.stopPropagation(); });
+            credit.append(creditLink, ' contributors');
+            thumbnail.appendChild(credit);
+            if (!thumbnail.hidden) thumbnailObserver.observe(thumbnailMap);
+          } else {
+            const empty = document.createElement('span');
+            empty.className = 'thumbnail-empty';
+            empty.textContent = 'Map unavailable';
+            thumbnail.appendChild(empty);
+          }
+          thumbnailCell.appendChild(thumbnail);
+          row.appendChild(thumbnailCell);
+          const startCell = document.createElement('td');
+          startCell.textContent = entry.timestamp ? dateFormatter.format(new Date(entry.timestamp)) : 'Unknown';
+          row.appendChild(startCell);
+          const durationCell = document.createElement('td');
+          durationCell.textContent = formatDuration(entry.timestamp, entry.endTimestamp);
+          row.appendChild(durationCell);
+          const distanceCell = document.createElement('td');
+          distanceCell.textContent = entry.distanceMiles == null ? 'Unknown' : (entry.distanceSource === 'path' ? '~' : '') + entry.distanceMiles.toFixed(1);
+          if (entry.distanceSource === 'path') distanceCell.title = 'Estimated from recorded points; the path may be incomplete.';
+          if (entry.distanceSource === 'reported') distanceCell.title = 'Distance reported in the export.';
+          row.appendChild(distanceCell);
+          const toggleCell = document.createElement('td');
+          const toggle = document.createElement('input');
+          toggle.type = 'checkbox';
+          toggle.className = 'trip-toggle';
+          toggle.checked = !excludedTrips.has(index);
+          toggle.setAttribute('role', 'switch');
+          toggle.setAttribute('aria-label', 'Include trip ' + (index + 1) + ' in mileage total');
+          toggle.title = 'Include trip in total';
+          toggle.addEventListener('click', function (event) { event.stopPropagation(); });
+          toggle.addEventListener('change', function () {
+            if (toggle.checked) {
+              activeTrips.set(index, entry);
+              excludedTrips.delete(index);
+            } else {
+              activeTrips.delete(index);
+              excludedTrips.add(index);
+            }
+            row.classList.toggle('excluded', !toggle.checked);
+            thumbnail.hidden = !toggle.checked;
+            const thumbnailMap = thumbnail.querySelector('.thumbnail-map');
+            if (thumbnailMap) {
+              if (toggle.checked) {
+                thumbnailObserver.observe(thumbnailMap);
+              } else {
+                thumbnailObserver.unobserve(thumbnailMap);
+                if (thumbnailMaps.has(thumbnailMap)) {
+                  thumbnailMaps.get(thumbnailMap).remove();
+                  thumbnailMaps.delete(thumbnailMap);
+                }
+              }
+            }
+            if (!toggle.checked && selectedRow === row) showLocation(entry, row);
+            updateTotal();
+            saveProgress();
+          });
+          toggleCell.appendChild(toggle);
+          row.appendChild(toggleCell);
+          if (hasLocation) row.addEventListener('click', function () { if (toggle.checked) showLocation(entry, row); });
+          rows.appendChild(row);
+        });
+        locations.appendChild(rows);
+        locations.appendChild(mapRow);
+        results.hidden = false;
+        status.textContent = entries.length + (entries.length === 1 ? ' trip found.' : ' trips found.');
+      } catch (error) {
+        if (currentSelection !== selection) return;
+        status.textContent = error instanceof SyntaxError ? 'This file is not valid JSON.' : 'Could not read this file.';
+      }
+    });
+  </script>
+</body>
+</html>

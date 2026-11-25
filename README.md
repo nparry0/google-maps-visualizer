@@ -1,0 +1,9 @@
+# google-maps-visualizer
+
+Run `npm install` and `npm start`, then open http://127.0.0.1:4173 and choose a Google Maps JSON export. Select a row to show it on the map. The server listens only on your computer; the export is read and parsed in your browser.
+
+The map and visible trip thumbnails request tiles from OpenStreetMap. These requests reveal the approximate map areas and your IP address, but not the export or the exact marker coordinates. Thumbnails load only when visible. OpenStreetMap use is subject to its [tile usage policy](https://operations.osmfoundation.org/policies/tiles/).
+
+Export CSV downloads the included trips' start times, durations, and mileage, plus their total. It does not include maps or coordinates. Estimates retain the `~` marker; the total uses unrounded distances and identifies any included trips with unknown mileage.
+
+The viewer shows Timeline activities as trips and associates timestamped path points when they fall within exactly one activity. Standalone path blocks, ambiguous points, visits, individual location records, saved places, and trips under 0.5 miles are not shown. All trips are included in the total by default; use the toggle to exclude or reinclude a trip. Excluded trips hide their maps. Toggle choices are saved in this browser's local storage against fingerprints of the export and trip list; reselect the same export to resume. Saving requires localhost or HTTPS. The export and coordinates are not stored there. Clearing browser site data, private browsing, a different browser or origin, or changes to the export or parsed trip list can prevent restoration. The page reports when storage is unavailable. Durations are rounded to the nearest minute. Miles come from the distance reported in the export when available. Values marked `~` are estimated from recorded path points and may be incomplete; trips with unknown miles remain visible and are excluded from the total. Run `npm test` to check the parser.
